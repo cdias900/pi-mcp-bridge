@@ -16,6 +16,6 @@
     "@sinclair/typebox": "*"
   },
   "pi": {
-    "extensions": ["./"]
+    "extensions": ["./index.ts"]
   }
 }
