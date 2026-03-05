@@ -16,7 +16,7 @@ import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
 
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
-import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
+import { StreamableHTTPClientTransport, StreamableHTTPError } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 import { SSEClientTransport } from "@modelcontextprotocol/sdk/client/sse.js";
 import { UnauthorizedError } from "@modelcontextprotocol/sdk/client/auth.js";
 
@@ -432,7 +432,7 @@ export class ServerManager {
 							const authProvider = new BridgeOAuthProvider(name, OAUTH_CALLBACK_PORT);
 
 							try {
-								return await raceWithTimeout(connectAndDiscover({ authProvider }), DEFAULT_TIMEOUT_MS, connectLabel);
+								return await raceWithTimeout(connectAndDiscover({ authProvider }), OAUTH_TIMEOUT_MS, connectLabel);
 							} catch (err) {
 								if (!(err instanceof UnauthorizedError)) throw err;
 
@@ -681,8 +681,18 @@ export class ServerManager {
 				throw err;
 			}
 
+			const streamableHttpNotSupported =
+				err instanceof StreamableHTTPError
+					? err.code === 404 || err.code === 405 || err.code === 415
+					: /method not allowed|not found/.test(toErrorMessage(err).toLowerCase());
+
 			// Best-effort cleanup of the failed attempt.
 			await this.safeClose(httpClient, httpTransport, "http");
+
+			// Only fall back to legacy SSE when StreamableHTTP is clearly unsupported by the server.
+			if (!streamableHttpNotSupported) {
+				throw err;
+			}
 
 			let sseClient: Client | undefined;
 			let sseTransport: unknown;

@@ -119,7 +119,7 @@ export interface ConnectedServer<ClientT = unknown, TransportT = unknown> {
 }
 
 /** Default per-server operation timeout (connect, listTools, callTool). */
-export const DEFAULT_TIMEOUT_MS = 15_000;
+export const DEFAULT_TIMEOUT_MS = 60_000;
 
 /** Maximum time to allow for an interactive OAuth browser flow. */
 export const OAUTH_TIMEOUT_MS = 120_000;
