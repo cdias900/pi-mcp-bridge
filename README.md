@@ -228,15 +228,14 @@ A realistic `~/.pi/mcp.json` with multiple servers:
 
 ```
 pi-mcp-bridge/
-├── package.json              # PI package manifest + @modelcontextprotocol/sdk dep
+├── package.json          # PI package manifest + @modelcontextprotocol/sdk dep
 ├── README.md
-└── extensions/
-    ├── index.ts              # Entry point: lifecycle, tool registration, output truncation
-    ├── types.ts              # Shared types and constants
-    ├── cache.ts              # Disk cache (SHA-256 hash + TTL)
-    ├── schema.ts             # JSON Schema → TypeBox conversion
-    ├── server-manager.ts     # Connection lifecycle, reconnection, process cleanup
-    └── commands.ts           # /mcp, /mcp-reload, /mcp-cache-clear
+├── index.ts              # Entry point: lifecycle, tool registration, output truncation
+├── types.ts              # Shared types and constants
+├── cache.ts              # Disk cache (SHA-256 hash + TTL)
+├── schema.ts             # JSON Schema → TypeBox conversion
+├── server-manager.ts     # Connection lifecycle, reconnection, process cleanup
+└── commands.ts           # /mcp, /mcp-reload, /mcp-cache-clear
 ```
 
 ## License
