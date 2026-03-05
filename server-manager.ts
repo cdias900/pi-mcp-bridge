@@ -10,7 +10,6 @@
  */
 
 import * as fs from "node:fs";
-import * as os from "node:os";
 import * as path from "node:path";
 
 import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
@@ -19,6 +18,7 @@ import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 import { SSEClientTransport } from "@modelcontextprotocol/sdk/client/sse.js";
+import { UnauthorizedError } from "@modelcontextprotocol/sdk/client/auth.js";
 
 import {
 	DEFAULT_TIMEOUT_MS,
@@ -26,15 +26,14 @@ import {
 	MAX_CONCURRENT_CONNECTS,
 	MAX_RETRIES,
 	MAX_RETRY_DELAY_MS,
+	OAUTH_TIMEOUT_MS,
 	RETRY_BACKOFF_FACTOR,
+	piHome,
 } from "./types.js";
 import type { McpServerConfig, McpTool, ServerState } from "./types.js";
 
-// Derive pi home from PI_CODING_AGENT_DIR (e.g. ~/.pi-foo/agent → ~/.pi-foo)
-// Falls back to ~/.pi if the env var is not set.
-const piHome = process.env.PI_CODING_AGENT_DIR
-	? path.dirname(process.env.PI_CODING_AGENT_DIR)
-	: path.join(os.homedir(), ".pi");
+import { BridgeOAuthProvider, OAUTH_CALLBACK_PORT } from "./oauth.js";
+import { createCallbackServer } from "./callback-server.js";
 
 const GLOBAL_MCP_CONFIG = path.join(piHome, "mcp.json");
 const PROJECT_MCP_CONFIG = path.join(process.cwd(), ".pi", "mcp.json");
@@ -170,6 +169,9 @@ export class ServerManager {
 	private readonly _pi: ExtensionAPI;
 	private readonly servers = new Map<string, InternalServerState>();
 	private configs: Record<string, McpServerConfig> = {};
+
+	/** Global lock used to serialize interactive OAuth flows (single callback port). */
+	private _oauthInProgress: Promise<void> | null = null;
 
 	/**
 	 * Called whenever a server's tool list is refreshed (initial connect, reconnect, listChanged).
@@ -405,11 +407,16 @@ export class ServerManager {
 		let transport: unknown;
 
 		try {
-			const connectAndDiscover = async () => {
-				const connected = await this.createAndConnect(name, state.config, (c, t) => {
-					client = c;
-					transport = t;
-				});
+			const connectAndDiscover = async (opts?: { authProvider?: BridgeOAuthProvider }) => {
+				const connected = await this.createAndConnect(
+					name,
+					state.config,
+					(c, t) => {
+						client = c;
+						transport = t;
+					},
+					opts,
+				);
 				client = connected.client;
 				transport = connected.transport;
 
@@ -417,11 +424,49 @@ export class ServerManager {
 				return { client, transport, tools };
 			};
 
-			const { client: connectedClient, transport: connectedTransport, tools } = await raceWithTimeout(
-				connectAndDiscover(),
-				DEFAULT_TIMEOUT_MS,
-				`connect ${name}`,
-			);
+			const connectLabel = `connect ${name}`;
+
+			const { client: connectedClient, transport: connectedTransport, tools } =
+				state.config.type === "http"
+					? await this.withOAuthLock(async () => {
+							const authProvider = new BridgeOAuthProvider(name, OAUTH_CALLBACK_PORT);
+
+							try {
+								return await raceWithTimeout(connectAndDiscover({ authProvider }), DEFAULT_TIMEOUT_MS, connectLabel);
+							} catch (err) {
+								if (!(err instanceof UnauthorizedError)) throw err;
+
+								const callbackServer = createCallbackServer(OAUTH_CALLBACK_PORT);
+								try {
+									const code = await raceWithTimeout(
+										callbackServer.waitForCode(),
+										OAUTH_TIMEOUT_MS,
+										`oauth ${name}`,
+									);
+
+									const finishAuth = (transport as any)?.finishAuth;
+									if (typeof finishAuth !== "function") {
+										throw new Error("OAuth transport does not support finishAuth()");
+									}
+
+									await finishAuth.call(transport, code);
+								} finally {
+									callbackServer.close();
+								}
+
+								// Best-effort cleanup of the failed attempt before retry.
+								await this.safeClose(client, transport, "http");
+								client = undefined;
+								transport = undefined;
+
+								return await raceWithTimeout(
+									connectAndDiscover({ authProvider }),
+									DEFAULT_TIMEOUT_MS,
+									`${connectLabel} (after auth)`,
+								);
+							}
+						})
+					: await raceWithTimeout(connectAndDiscover(), DEFAULT_TIMEOUT_MS, connectLabel);
 
 			const current = this.servers.get(name);
 			if (!current) {
@@ -458,7 +503,32 @@ export class ServerManager {
 			await this.safeClose(client, transport, state.config.type);
 
 			// Schedule reconnect attempts unless intentionally disposed.
-			this.scheduleReconnect(name);
+			if (!(err instanceof UnauthorizedError)) {
+				this.scheduleReconnect(name);
+			}
+		}
+	}
+
+	private async withOAuthLock<T>(fn: () => Promise<T>): Promise<T> {
+		while (this._oauthInProgress) {
+			try {
+				await this._oauthInProgress;
+			} catch {
+				// ignore — lock should never reject.
+			}
+		}
+
+		let release: (() => void) | undefined;
+		const lock = new Promise<void>((resolve) => {
+			release = resolve;
+		});
+		this._oauthInProgress = lock;
+
+		try {
+			return await fn();
+		} finally {
+			release?.();
+			if (this._oauthInProgress === lock) this._oauthInProgress = null;
 		}
 	}
 
@@ -557,6 +627,7 @@ export class ServerManager {
 		serverName: string,
 		config: McpServerConfig,
 		onCreated?: (client: Client, transport: unknown) => void,
+		opts?: { authProvider?: BridgeOAuthProvider },
 	): Promise<{ client: Client; transport: unknown }> {
 		if (config.type === "stdio") {
 			if (!config.command) {
@@ -593,30 +664,40 @@ export class ServerManager {
 		}
 
 		// HTTP: try Streamable HTTP first, fall back to SSE.
+		const authProvider = opts?.authProvider ?? new BridgeOAuthProvider(serverName, OAUTH_CALLBACK_PORT);
+
 		let httpClient: Client | undefined;
 		let httpTransport: unknown;
 
 		try {
-			httpTransport = new StreamableHTTPClientTransport(url);
+			httpTransport = new StreamableHTTPClientTransport(url, { authProvider });
 			httpClient = this.createClient(serverName);
 			onCreated?.(httpClient, httpTransport);
 			await httpClient.connect(httpTransport);
 			this.attachCloseHandlers(serverName, httpClient, httpTransport);
 			return { client: httpClient, transport: httpTransport };
 		} catch (err) {
+			if (err instanceof UnauthorizedError) {
+				throw err;
+			}
+
 			// Best-effort cleanup of the failed attempt.
 			await this.safeClose(httpClient, httpTransport, "http");
 
 			let sseClient: Client | undefined;
 			let sseTransport: unknown;
 			try {
-				sseTransport = new SSEClientTransport(url);
+				sseTransport = new SSEClientTransport(url, { authProvider });
 				sseClient = this.createClient(serverName);
 				onCreated?.(sseClient, sseTransport);
 				await sseClient.connect(sseTransport);
 				this.attachCloseHandlers(serverName, sseClient, sseTransport);
 				return { client: sseClient, transport: sseTransport };
 			} catch (err2) {
+				if (err2 instanceof UnauthorizedError) {
+					throw err2;
+				}
+
 				await this.safeClose(sseClient, sseTransport, "sse");
 				const msg1 = toErrorMessage(err);
 				const msg2 = toErrorMessage(err2);

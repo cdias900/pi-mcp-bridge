@@ -6,6 +6,17 @@
  * without causing circular dependencies.
  */
 
+import * as os from "node:os";
+import * as path from "node:path";
+
+/**
+ * Derive pi home from PI_CODING_AGENT_DIR (e.g. ~/.pi-foo/agent → ~/.pi-foo)
+ * Falls back to ~/.pi if the env var is not set.
+ */
+export const piHome = process.env.PI_CODING_AGENT_DIR
+	? path.dirname(process.env.PI_CODING_AGENT_DIR)
+	: path.join(os.homedir(), ".pi");
+
 /**
  * MCP server configuration as read from `~/.pi/mcp.json` (global) or `.pi/mcp.json` (project).
  */
@@ -109,6 +120,9 @@ export interface ConnectedServer<ClientT = unknown, TransportT = unknown> {
 
 /** Default per-server operation timeout (connect, listTools, callTool). */
 export const DEFAULT_TIMEOUT_MS = 15_000;
+
+/** Maximum time to allow for an interactive OAuth browser flow. */
+export const OAUTH_TIMEOUT_MS = 120_000;
 
 /** Maximum number of reconnection attempts before giving up. */
 export const MAX_RETRIES = 5;
