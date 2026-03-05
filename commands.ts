@@ -50,7 +50,10 @@ export function registerCommands(
 		handler: async (_args, ctx) => {
 			const servers = serverManager.getServers();
 			if (servers.length === 0) {
-				ctx.ui?.notify?.("No MCP servers configured. Add them to ~/.pi/mcp.json or .pi/mcp.json", "warning");
+				const piHome = process.env.PI_CODING_AGENT_DIR
+					? require("node:path").dirname(process.env.PI_CODING_AGENT_DIR)
+					: "~/.pi";
+				ctx.ui?.notify?.(`No MCP servers configured. Add them to ${piHome}/mcp.json or .pi/mcp.json`, "warning");
 				return;
 			}
 

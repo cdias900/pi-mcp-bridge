@@ -58,7 +58,10 @@ function coerceEntry(value: unknown, serverName: string): CacheEntry | null {
  * Returns the absolute path to the MCP tool cache file.
  */
 export function getCachePath(): string {
-	return path.join(os.homedir(), ".pi", CACHE_FILE_NAME);
+	const piHome = process.env.PI_CODING_AGENT_DIR
+		? path.dirname(process.env.PI_CODING_AGENT_DIR)
+		: path.join(os.homedir(), ".pi");
+	return path.join(piHome, CACHE_FILE_NAME);
 }
 
 /**

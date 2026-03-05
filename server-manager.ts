@@ -30,7 +30,13 @@ import {
 } from "./types.js";
 import type { McpServerConfig, McpTool, ServerState } from "./types.js";
 
-const GLOBAL_MCP_CONFIG = path.join(os.homedir(), ".pi", "mcp.json");
+// Derive pi home from PI_CODING_AGENT_DIR (e.g. ~/.pi-foo/agent → ~/.pi-foo)
+// Falls back to ~/.pi if the env var is not set.
+const piHome = process.env.PI_CODING_AGENT_DIR
+	? path.dirname(process.env.PI_CODING_AGENT_DIR)
+	: path.join(os.homedir(), ".pi");
+
+const GLOBAL_MCP_CONFIG = path.join(piHome, "mcp.json");
 const PROJECT_MCP_CONFIG = path.join(process.cwd(), ".pi", "mcp.json");
 
 function isPlainObject(value: unknown): value is Record<string, unknown> {
