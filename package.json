@@ -1,7 +1,7 @@
 {
   "name": "pi-mcp-bridge",
   "version": "1.0.0",
-  "description": "MCP (Model Context Protocol) server bridge for PI — connect any MCP server as PI tools",
+  "description": "Deprecated MCP bridge for Pi — migrate to Pi's built-in MCP support",
   "keywords": ["pi-package", "mcp", "model-context-protocol"],
   "repository": { "type": "git", "url": "https://github.com/cdias900/pi-mcp-bridge" },
   "license": "MIT",

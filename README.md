@@ -1,14 +1,65 @@
 # pi-mcp-bridge
 
-MCP (Model Context Protocol) server bridge for PI. Connects to any MCP server and exposes its tools as native PI tools using the naming scheme `mcp__{server}__{tool}`.
+> **Deprecated:** use Pi's built-in MCP support instead. The migration below is tested with Pi **0.99.1**. New setups should not install this package.
+>
+> The bridge remains functional for existing installations; it does not automatically change configuration or disable itself. Its `/mcp` command replaces Pi's built-in MCP extension, so only one implementation should be loaded.
 
-## Install
+## Migrate to built-in MCP
+
+1. **Check native support and back up your configuration.** Run `pi --version` and `pi mcp --help`. If native MCP commands are unavailable, update Pi through your installation's supported workflow before migrating. Back up both global and project MCP files and your Pi settings.
+2. **Convert every bridge configuration you use.** The global file moves from `~/.pi/mcp.json` to `~/.pi/agent/mcp.json`; project files stay at `.pi/mcp.json`. Wrap the flat server map in `mcpServers` and add `"exposure": "direct"` to migrated entries to preserve the bridge's direct tool access:
+
+   ```json
+   {
+     "mcpServers": {
+       "my-server": {
+         "type": "stdio",
+         "command": "npx",
+         "args": ["-y", "some-mcp-package@latest"],
+         "exposure": "direct"
+       },
+       "remote-server": {
+         "type": "http",
+         "url": "https://example.com/mcp",
+         "exposure": "direct"
+       }
+     }
+   }
+   ```
+
+   If `PI_CODING_AGENT_DIR` is set, the bridge's global file is `mcp.json` in its parent directory, and the native file is `mcp.json` inside that agent directory. If you use `PI_MCP_CONFIG`, migrate that file too and update its caller: native MCP does **not** use that override. SDK clients can supply scoped servers through `createMcpExtension({ loadConfig })`.
+
+   Preserve commands, arguments, environment variables, URLs, unrelated native entries and existing exposure choices. If a native file already exists, merge under `mcpServers`; resolve same-name conflicts deliberately instead of overwriting it. Project entries replace global entries with the same name, and native Pi reads project configuration only after project trust is granted.
+3. **Check compatibility before removing the bridge.**
+   - Native MCP supports stdio and Streamable HTTP, **not legacy SSE or HTTP-to-SSE fallback**. An `http` entry may have relied on that fallback. Verify its server supports Streamable HTTP; do not simply relabel an SSE endpoint.
+   - Bridge OAuth credentials under `~/.pi/mcp-oauth/` are not automatically imported. Native Pi uses its own `mcp-auth.json` store; sign in again with `pi mcp login <server>` or `/mcp login <server>` as needed. Native sessions report servers needing sign-in rather than automatically opening the browser at startup.
+   - Native MCP defaults to **codemode** exposure. The explicit `direct` setting above retains existing tool calls and the `mcp__<server>__<tool>` names. You can adopt codemode or deferred discovery later through `/mcp`.
+   - If you use [`pi-subagent`](https://github.com/cdias900/pi-subagent), update it to the native-configuration-compatible version before using `mcps` scoping. Scoped children retain isolated HTTP/stdio clients; they do not implement native OAuth, resources or codemode exposure. See that package's compatibility section for supported options. Other consumers of the flat configuration need their own migration.
+4. **Remove the bridge from each scope where it is installed.**
+
+   ```bash
+   pi remove git:github.com/cdias900/pi-mcp-bridge
+   # Also run this if the project declares the package:
+   pi remove --local git:github.com/cdias900/pi-mcp-bridge
+   ```
+
+   Remove manually loaded bridge copies from `extensions` settings or extension-directory symlinks as well. Do not remove a global installation as part of project-only setup without agreeing on the global migration.
+5. **Enable built-in MCP.** In `pi config`, enable `mcp` under Built-in extensions, or merge `"+builtin:mcp"` into the relevant settings file's `extensions` array. Preserve other extension filters. Restart Pi or run `/reload` so the bridge is unloaded and native MCP takes over.
+6. **Verify connections and real calls.** `pi mcp list` connects all enabled configured servers and reports errors; a nonzero exit can indicate an unavailable server, not a malformed migration. Use `/mcp` to inspect, sign in and reconnect, then make a bounded read-only call through each server you use. Once successful, retire the old flat config and cache while keeping your backups.
+
+Native commands replace `/mcp-reload` with `/mcp reconnect <server>`; `/mcp-cache-clear` is no longer needed. Native Pi also supports HTTP headers, environment/command-based secrets, MCP resources and per-tool exposure. See the installed Pi documentation (`docs/mcp.md`) for the full contract.
+
+## Legacy bridge reference
+
+The sections below describe the deprecated bridge only, not native Pi configuration.
+
+### Install (legacy only)
 
 ```bash
 pi install git:github.com/cdias900/pi-mcp-bridge
 ```
 
-## Quick Start
+### Quick Start (legacy only)
 
 1. Create `~/.pi/mcp.json`:
 

@@ -274,6 +274,11 @@ export default function (pi: ExtensionAPI): void {
 		if (initialized) return;
 		initialized = true;
 
+		ctx?.ui?.notify?.(
+			"pi-mcp-bridge is deprecated. Migrate to Pi's built-in MCP support (tested with Pi 0.99.1), then remove this package. Instructions: https://github.com/cdias900/pi-mcp-bridge#migrate-to-built-in-mcp",
+			"warning",
+		);
+
 		const serverNames = loadConfigAndRegisterInitialTools(ctx);
 		if (serverNames.length === 0) return;
 
